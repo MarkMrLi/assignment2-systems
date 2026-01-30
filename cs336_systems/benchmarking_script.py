@@ -150,11 +150,13 @@ def run_benchmark():
     executor = submitit.AutoExecutor(folder="logs/slurm_logs")
     executor.update_parameters(timeout_min=60)
 
-    jobs = []
-    job_configs = []
+    
     results = []
-    with executor.batch():
-        for context_length in context_lengths:
+    
+    for context_length in context_lengths:
+        jobs = []
+        job_configs = []
+        with executor.batch():
             for idx, (d_m, d_f, n_l, n_h, d_id) in enumerate(zip(d_model, d_ff, num_layers, num_heads, device_ids)):
                 job = executor.submit(
                     benchmark_one_step, d_m, d_f, n_l, n_h, vocab_size, context_length, batch_size, warmup_step, d_id
@@ -171,33 +173,33 @@ def run_benchmark():
                     }
                 )
 
-    for config, job in zip(job_configs, jobs):
-        try:
-            r = job.result()
-            results.append(
-                {
-                    **config,
-                    "status": "success",
-                    "Fwd Mean (ms)": f"{r['fwd_mean']:.2f}",
-                    "Fwd Std (ms)": f"{r['fwd_std']:.2f}",
-                    "Bwd Mean (ms)": f"{r['bwd_mean']:.2f}",
-                    "Bwd Std (ms)": f"{r['bwd_std']:.2f}",
-                    "Total (ms)": f"{r['total_mean']:.2f}",
-                }
-            )
-        except Exception as e:
-            error_type, error_msg = classify_error(e)
-            results.append(
-                {
-                    **config,
-                    "status": f"{error_type}: {error_msg}",
-                    "Fwd Mean (ms)": "-",
-                    "Fwd Std (ms)": "-",
-                    "Bwd Mean (ms)": "-",
-                    "Bwd Std (ms)": "-",
-                    "Total (ms)": "-",
-                }
-            )
+        for config, job in zip(job_configs, jobs):
+            try:
+                r = job.result()
+                results.append(
+                    {
+                        **config,
+                        "status": "success",
+                        "Fwd Mean (ms)": f"{r['fwd_mean']:.2f}",
+                        "Fwd Std (ms)": f"{r['fwd_std']:.2f}",
+                        "Bwd Mean (ms)": f"{r['bwd_mean']:.2f}",
+                        "Bwd Std (ms)": f"{r['bwd_std']:.2f}",
+                        "Total (ms)": f"{r['total_mean']:.2f}",
+                    }
+                )
+            except Exception as e:
+                error_type, error_msg = classify_error(e)
+                results.append(
+                    {
+                        **config,
+                        "status": f"{error_type}: {error_msg}",
+                        "Fwd Mean (ms)": "-",
+                        "Fwd Std (ms)": "-",
+                        "Bwd Mean (ms)": "-",
+                        "Bwd Std (ms)": "-",
+                        "Total (ms)": "-",
+                    }
+                )
 
     df = pd.DataFrame(results)
     file_path = pathlib.Path(__file__).parent.parent / "results" / "benchmark.md"
