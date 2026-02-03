@@ -48,8 +48,17 @@ def classify_error(e: Exception) -> tuple[str, str]:
 
 
 def benchmark_one_step(
-    d_model, d_ff, num_layers, num_heads, vocab_size, context_length, batch_size, warmup_step, device_id,
-    enable_mixed_precision = False, mix_dtype = "bf16"
+    d_model,
+    d_ff,
+    num_layers,
+    num_heads,
+    vocab_size,
+    context_length,
+    batch_size,
+    warmup_step,
+    device_id,
+    enable_mixed_precision=False,
+    mix_dtype="bf16",
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     import torch
@@ -110,7 +119,7 @@ def benchmark_one_step(
     for step in range(10):
         optimizer.zero_grad()
         torch.cuda.nvtx.range_push(f"step_{step}")
-        
+
         with autocast_ctx, torch.cuda.nvtx.range("Forward"):
             start_forward_time = timeit.default_timer()
             y_hat = model.forward(inputs)
@@ -144,8 +153,23 @@ def benchmark_one_step(
     }
 
 
-def run_benchmark(enable_mix_precision:bool, mix_type: str):
-    model_size = ["Small", "Medium", "Large", "xl", "2.7B"]
+def _get_valid_model_sizes(selected_sizes: str) -> set:
+    """
+    Parse comma-separated model sizes and return valid ones.
+    Returns set of valid model sizes or all if 'all' is specified.
+    """
+    all_sizes = {"Small", "Medium", "Large", "xl", "2.7B"}
+    if selected_sizes.lower() == "all":
+        return all_sizes
+    selected = {s.strip() for s in selected_sizes.split(",")}
+    invalid = selected - all_sizes
+    if invalid:
+        raise ValueError(f"Invalid model sizes: {invalid}. Valid options: {sorted(all_sizes)}")
+    return selected
+
+
+def run_benchmark(enable_mix_precision: bool, mix_type: str, model_size_filter: str = "all"):
+    model_sizes = ["Small", "Medium", "Large", "xl", "2.7B"]
     d_model = [768, 1024, 1280, 1600, 2560]
     d_ff = [3072, 4096, 5120, 6400, 10240]
     num_layers = [12, 24, 36, 48, 32]
@@ -159,26 +183,47 @@ def run_benchmark(enable_mix_precision:bool, mix_type: str):
     executor = submitit.AutoExecutor(folder="logs/slurm_logs")
     executor.update_parameters(timeout_min=60)
 
-    
+    valid_sizes = _get_valid_model_sizes(model_size_filter)
+
+    filtered_configs = [
+        (size, d_m, d_f, n_l, n_h, d_id)
+        for size, d_m, d_f, n_l, n_h, d_id in zip(model_sizes, d_model, d_ff, num_layers, num_heads, device_ids)
+        if size in valid_sizes
+    ]
+
+    if not filtered_configs:
+        print(f"No valid model sizes found matching: {model_size_filter}")
+        return
+
     results = []
-    
+
     for context_length in context_lengths:
         jobs = []
         job_configs = []
         with executor.batch():
-            for idx, (d_m, d_f, n_l, n_h, d_id) in enumerate(zip(d_model, d_ff, num_layers, num_heads, device_ids)):
+            for size, d_m, d_f, n_l, n_h, d_id in filtered_configs:
                 job = executor.submit(
-                    benchmark_one_step, d_m, d_f, n_l, n_h, vocab_size, context_length, batch_size, warmup_step, d_id,
-                    enable_mix_precision, mix_type
+                    benchmark_one_step,
+                    d_m,
+                    d_f,
+                    n_l,
+                    n_h,
+                    vocab_size,
+                    context_length,
+                    batch_size,
+                    warmup_step,
+                    d_id,
+                    enable_mix_precision,
+                    mix_type,
                 )
                 jobs.append(job)
                 job_configs.append(
                     {
-                        "model_size": model_size[idx],
-                        "d_model": d_model[idx],
-                        "d_ff": d_ff[idx],
-                        "num_layers": num_layers[idx],
-                        "num_heads": num_heads[idx],
+                        "model_size": size,
+                        "d_model": d_m,
+                        "d_ff": d_f,
+                        "num_layers": n_l,
+                        "num_heads": n_h,
                         "context_length": context_length,
                     }
                 )
@@ -214,8 +259,10 @@ def run_benchmark(enable_mix_precision:bool, mix_type: str):
     df = pd.DataFrame(results)
     file_path = pathlib.Path(__file__).parent.parent / "results" / "benchmark.md"
     with open(file_path, "a", encoding="utf-8") as f:
-        if enable_mix_precision :
-            f.write(f"\n### Model Benchmarking Results with warm-up step:{warmup_step}, with mixed precision:{mix_type}\n")
+        if enable_mix_precision:
+            f.write(
+                f"\n### Model Benchmarking Results with warm-up step:{warmup_step}, with mixed precision:{mix_type}\n"
+            )
         else:
             f.write(f"\n### Model Benchmarking Results with warm-up step:{warmup_step}\n")
         f.write(df.to_markdown(index=False))
@@ -228,7 +275,14 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark your training infra")
     parser.add_argument("--eval", action="store_true", help="benchmark with default configs")
     parser.add_argument("--mix", action="store_true", help="turn on mixed precision")
-    parser.add_argument("--mix_dtype", type=str, default="bf16", choices = ["bf16","fp16"], help="mixed precision dtype")
+    parser.add_argument("--mix_dtype", type=str, default="bf16", choices=["bf16", "fp16"], help="mixed precision dtype")
+    parser.add_argument("--memory", action="store_true", help="profile memory")
+    parser.add_argument(
+        "--model_size",
+        type=str,
+        default="all",
+        help="model sizes to benchmark: Small, Medium, Large, xl, 2.7B (comma-separated or 'all')",
+    )
     parser.add_argument("--d_model", type=int, default=768, help="d_model")
     parser.add_argument("--d_ff", type=int, default=3072, help="d_ff")
     parser.add_argument("--num_layers", type=int, default=12, help="num_layers")
@@ -237,12 +291,21 @@ def main():
     args = parser.parse_args()
 
     if args.eval:
-        run_benchmark(args.mix,args.mix_dtype)
+        run_benchmark(args.mix, args.mix_dtype, args.model_size)
         return
     else:
         benchmark_one_step(
-            args.d_model, args.d_ff, args.num_layers, args.num_heads, 10000, args.context_length, 4, 5, device_id=0,
-            enable_mixed_precision=args.mix,mix_dtype=args.mix_dtype
+            args.d_model,
+            args.d_ff,
+            args.num_layers,
+            args.num_heads,
+            10000,
+            args.context_length,
+            4,
+            5,
+            device_id=0,
+            enable_mixed_precision=args.mix,
+            mix_dtype=args.mix_dtype,
         )
 
 
