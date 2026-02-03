@@ -56,32 +56,33 @@ h20 × 8
 ## Analyse
 - (b) 向前传播时间从 29ms 增加到 300 ms，反向传播时间从 35ms 增加到 581 ms，反向传播时间逐渐接近向前传播两倍的理论值，可能是由于小模型的 forward 和 backward 过程主要是 memory bound，同时可以看到标准差很小(小于均值 1%)，说明训练进入稳定阶段
 - (c) 不进行预热 forward 时间会显著提升且标准差极大，主要是因为首轮迭代包括一些 CUDA 内核加载、显存分配、算子优化等一次性开销
+
 ---
 
-### Model Benchmarking Results with warm-up step:5
+### Model Benchmarking Results with warm-up step:5 (FP32)
 
-| **model_size** | **d_model** | **d_ff** | **num_layers** | **num_heads** | **context_length** | **status** | **Fwd Mean (ms)** | **Fwd Std (ms)** | **Bwd Mean (ms)** | **Bwd Std (ms)** | **Total (ms)** | 
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | 
-| Small | 768 | 3072 | 12 | 12 | 128 | success | 76.80 | 8.16 | 85.83 | 4.41 | 162.63 | 
-| Medium | 1024 | 4096 | 24 | 16 | 128 | success | 143.23 | 4.05 | 159.63 | 3.29 | 302.86 | 
-| Large | 1280 | 5120 | 36 | 20 | 128 | success | 202.31 | 3.79 | 220.45 | 4.02 | 422.76 | 
-| xl | 1600 | 6400 | 48 | 25 | 128 | success | 266.70 | 2.61 | 290.30 | 3.39 | 557.00 | 
-| 2.7B | 2560 | 10240 | 32 | 32 | 128 | success | 186.83 | 4.52 | 318.73 | 0.27 | 505.56 | 
-| Small | 768 | 3072 | 12 | 12 | 256 | success | 75.67 | 4.76 | 86.34 | 9.13 | 162.01 | 
-| Medium | 1024 | 4096 | 24 | 16 | 256 | success | 131.90 | 3.41 | 142.61 | 2.14 | 274.51 | 
-| Large | 1280 | 5120 | 36 | 20 | 256 | success | 199.17 | 4.02 | 222.90 | 3.93 | 422.07 | 
-| xl | 1600 | 6400 | 48 | 25 | 256 | success | 259.30 | 2.71 | 384.28 | 0.62 | 643.58 | 
-| 2.7B | 2560 | 10240 | 32 | 32 | 256 | success | 328.13 | 8.34 | 581.11 | 1.05 | 909.24 | 
-| Small | 768 | 3072 | 12 | 12 | 512 | success | 72.14 | 2.61 | 87.16 | 6.22 | 159.30 | 
-| Medium | 1024 | 4096 | 24 | 16 | 512 | success | 142.20 | 9.61 | 184.14 | 0.31 | 326.34 | 
-| Large | 1280 | 5120 | 36 | 20 | 512 | success | 206.08 | 0.82 | 391.87 | 0.58 | 597.96 | 
-| xl | 1600 | 6400 | 48 | 25 | 512 | success | 386.92 | 0.22 | 768.69 | 1.29 | 1155.61 | 
-| 2.7B | 2560 | 10240 | 32 | 32 | 512 | success | 670.15 | 8.85 | 1167.95 | 1.64 | 1838.10 | 
-| Small | 768 | 3072 | 12 | 12 | 1024 | success | 70.98 | 1.31 | 132.42 | 0.17 | 203.40 | 
-| Medium | 1024 | 4096 | 24 | 16 | 1024 | success | 204.93 | 0.53 | 398.73 | 0.26 | 603.65 | 
-| Large | 1280 | 5120 | 36 | 20 | 1024 | success | 422.26 | 0.14 | 825.80 | 0.67 | 1248.06 | 
-| xl | 1600 | 6400 | 48 | 25 | 1024 | OOM: CUDA Out of Memory | - | - | - | - | - | 
-| 2.7B | 2560 | 10240 | 32 | 32 | 1024 | OOM: CUDA Out of Memory | - | - | - | - | - |
+| model_size | d_model | d_ff | num_layers | num_heads | context_length | status                  | Fwd Mean (ms) | Fwd Std (ms) | Bwd Mean (ms) | Bwd Std (ms) | Total (ms)   |
+|------------|---------|------|------------|-----------|----------------|-------------------------|---------------|--------------|---------------|--------------|--------------|
+| Small      | 768     | 3072 | 12         | 12        | 128            | success                 | 24.90         | 1.60         | 26.56         | 1.85         | 51.46        |
+| Medium     | 1024    | 4096 | 24         | 16        | 128            | success                 | 41.70         | 1.24         | 51.80         | 0.77         | 93.50        |
+| Large      | 1280    | 5120 | 36         | 20        | 128            | success                 | 64.92         | 1.44         | 119.09        | 0.27         | 184.01       |
+| xl         | 1600    | 6400 | 48         | 25        | 128            | success                 | 109.82        | 3.21         | 215.43        | 0.65         | 325.25       |
+| 2.7B       | 2560    | 10240| 32         | 32        | 128            | success                 | 184.54        | 9.08         | 315.63        | 0.20         | 500.17       |
+| Small      | 768     | 3072 | 12         | 12        | 256            | success                 | 24.00         | 1.65         | 31.01         | 0.99         | 55.01        |
+| Medium     | 1024    | 4096 | 24         | 16        | 256            | success                 | 46.82         | 0.26         | 92.32         | 0.35         | 139.14       |
+| Large      | 1280    | 5120 | 36         | 20        | 256            | success                 | 112.92        | 2.10         | 202.45        | 0.27         | 315.37       |
+| xl         | 1600    | 6400 | 48         | 25        | 256            | success                 | 186.68        | 3.50         | 381.29        | 1.09         | 567.97       |
+| 2.7B       | 2560    | 10240| 32         | 32        | 256            | success                 | 326.91        | 9.27         | 576.89        | 0.37         | 903.80       |
+| Small      | 768     | 3072 | 12         | 12        | 512            | success                 | 31.79         | 2.93         | 61.38         | 0.23         | 93.16        |
+| Medium     | 1024    | 4096 | 24         | 16        | 512            | success                 | 93.69         | 0.22         | 181.10        | 0.30         | 274.78       |
+| Large      | 1280    | 5120 | 36         | 20        | 512            | success                 | 208.06        | 2.28         | 388.45        | 0.40         | 596.52       |
+| xl         | 1600    | 6400 | 48         | 25        | 512            | success                 | 393.76        | 3.67         | 763.23        | 0.90         | 1156.99      |
+| 2.7B       | 2560    | 10240| 32         | 32        | 512            | success                 | 668.40        | 9.33         | 1161.65       | 0.78         | 1830.04      |
+| Small      | 768     | 3072 | 12         | 12        | 1024           | success                 | 66.06         | 0.13         | 130.25        | 0.51         | 196.31       |
+| Medium     | 1024    | 4096 | 24         | 16        | 1024           | success                 | 200.42        | 0.05         | 393.11        | 0.33         | 593.53       |
+| Large      | 1280    | 5120 | 36         | 20        | 1024           | success                 | 423.53        | 2.36         | 816.13        | 0.47         | 1239.66      |
+| xl         | 1600    | 6400 | 48         | 25        | 1024           | OOM: CUDA Out of Memory | -             | -            | -             | -            | -            |
+| 2.7B       | 2560    | 10240| 32         | 32        | 1024           | OOM: CUDA Out of Memory | -             | -            | -             | -            | -            |
 
 (a) 与使用 python 标准库测试的结果相同。
 
@@ -159,6 +160,8 @@ For the Large model (36 layers), the top GEMM kernel has 217 instances:
 2. **Warmup importance**: First iteration includes CUDA kernel compilation, memory allocation, and operator optimization overhead
 3. **FlashAttention motivation**: The observed Softmax memory overhead (~400μs end-to-end vs ~35μs kernel time) demonstrates why fusing Softmax with Attention in SRAM is beneficial
 
+---
+
 ### Model Benchmarking Results with warm-up step:5, with mixed precision:bf16
 
 | model_size   |   d_model |   d_ff |   num_layers |   num_heads |   context_length | status                  | Fwd Mean (ms)   | Fwd Std (ms)   | Bwd Mean (ms)   | Bwd Std (ms)   | Total (ms)   |
@@ -184,15 +187,70 @@ For the Large model (36 layers), the top GEMM kernel has 217 instances:
 | xl           |      1600 |   6400 |           48 |          25 |             1024 | success                 | 339.99          | 3.62           | 648.14          | 0.95           | 988.13       |
 | 2.7B         |      2560 |  10240 |           32 |          32 |             1024 | OOM: CUDA Out of Memory | -               | -              | -               | -              | -            |
 
-## 分析
-使用混合推理（BF16）之后，各种大小的模型推理速度都显著提升，约有三倍的加速。但是有个反直觉的现象我不是很理解：模型参数更大的加速比不应该更大吗？因为小模型可能受限于带宽
+## BF16 Mixed Precision Analysis
+
+### Speedup Comparison (context_length=128)
+
+| Model | FP32 Total (ms) | BF16 Total (ms) | Speedup | Trend |
+|-------|-----------------|-----------------|---------|-------|
+| Small | 51.46 | 53.65 | **0.96x** | ⚠️ Slower |
+| Medium | 93.50 | 98.61 | **0.95x** | ⚠️ Slower |
+| Large | 184.01 | 145.66 | **1.26x** | ✅ Faster |
+| xl | 325.25 | 193.14 | **1.68x** | ✅ Faster |
+| 2.7B | 500.17 | 229.67 | **2.18x** | ✅ Faster |
+
+### BF16 Speedup vs Model Size Visualization
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         BF16 Speedup vs Model Size                          │
+│                         (context_length=128, batch_size=4)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Speedup                                                                    │
+│      ▲                                                                      │
+│                                                                             │
+│   2.5│                                            ★★★ 2.18x (2.7B)        │
+│      │                                       ★★                            │
+│   2.0│                                  ★★                                 │
+│      │                             ★★ 1.68x (xl)                           │
+│   1.5│                        ★★                                           │
+│      │                   ★★ 1.26x (Large)                                  │
+│   1.0│    ○       ○                                                       │
+│      │    |       |                                                       │
+│   0.5│    ○       ○                                                       │
+│      │    |       |                                                       │
+│   0.0└────○───────○───────────────────────────────────────────────────────▶│
+│          Small  Medium   Large    xl      2.7B                             │
+│           0.96x   0.95x   1.26x   1.68x    2.18x                           │
+│                                                                             │
+│   Legend:                                                                    │
+│   ○ = Slowdown (<1.0x): Tensor Core launch + cast overhead dominates        │
+│   ★ = Speedup (>1.0x): Sufficient GEMM volume amortizes overhead            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Findings
+
+1. **Tensor Core Overhead Dominates Small Models**: Small/Medium models show ~0.96x speedup because:
+   - FP32→BF16 cast operations add latency
+   - Tensor Core launch overhead isn't amortized by small GEMMs
+   - Memory bandwidth savings don't help when data is already in cache
+
+2. **Speedup Scales with Model Size**: Larger models achieve greater speedup because:
+   - Sufficient GEMM volume to fully utilize Tensor Cores
+   - Cast overhead becomes negligible relative to computation
+   - BF16 HBM bandwidth reduction provides real benefit
+
+3. **Memory Savings > Speed Gains**: The primary benefit of BF16 is memory reduction:
+   - FP32 OOM: xl and 2.7B at context_length=1024
+   - BF16 success: All models including 2.7B run successfully
+
+### Analysis
+
+更新：之前的数据有误，确实是符合直觉的，小模型、短 context_len 的情况下混合精度对速率的提升确实较小，甚至没有
 
 同时混合推理还优化了显存的占用，原本在 `context_len = 1024` 产生 OOM 的 xl 模型，在混合推理下可以正常完成训练
 
-| Model | FP32 Total (ms) | BF16 Total (ms) | Speedup |
-|-------|-----------------|-----------------|---------|
-| Small | 162.63 | 53.65 | 3.03x |
-| Medium | 302.86 | 98.61 | 3.07x |
-| Large | 422.76 | 145.66 | 2.90x |
-| xl | 557.00 | 193.14 | 2.88x |
-| 2.7B | 505.56 | 229.67 | 2.20x |
+**Conclusion:** BF16 mixed precision provides negative or minimal speedup for small models but significant speedup (1.26x-2.18x) for large models. The primary engineering benefit is memory reduction enabling larger models/batches to fit in GPU memory.

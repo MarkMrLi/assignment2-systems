@@ -1,5 +1,5 @@
 # CS336 Learning Ledger
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-02-03 (Corrected)
 
 ---
 
@@ -31,6 +31,7 @@
 - **Mixed Precision Training Flow**: Forward/Backward in autocast, Optimizer outside (Master Weights)
 - **Conditional Autocast**: Using `nullcontext` for no-op precision switching
 - **Warmup Strategy**: Must match target precision (FP32 warmup → BF16 measure = JIT overhead contamination)
+- **BF16 Speedup Scaling**: Small models slower (Tensor Core overhead), large models faster (sufficient GEMM volume) - **CORRECTED**
 
 ### 🟡 Developing
 - Slurm + CUDA_VISIBLE_DEVICES 交互机制
@@ -44,8 +45,9 @@
 - **Tile size trade-offs**: 128×128 for high arithmetic intensity, 64×64 when register pressure high
 - **Arithmetic Intensity**: Can explain concept, need practice calculating for specific ops
 - **Mixed Precision Training**: Hands-on implementation with BF16 benchmark completed
-- **Speedup Analysis**: Understanding why BF16 speedup plateaus and doesn't scale with model size
+- **Speedup Analysis**: Corrected understanding - BF16 speedup increases with model size (not plateaus)
 - **Accumulation Error Visualization**: Can predict error patterns, need to implement visualization tools
+- **Tensor Core Overhead Quantification**: Know it exists for small models, need to measure exact impact
 
 ### 🔴 Blind Spots
 - Slurm 集群环境下的 GPU 分配与隔离策略
@@ -54,7 +56,7 @@
 - Gradient checkpointing trade-offs
 - Tensor Parallelism vs Pipeline Parallelism decision criteria
 - AdamW optimizer state memory overhead calculation
-- **Tensor Core utilization measurement**: Know they accelerate GEMM, don't know how to measure
+- **Tensor Core utilization measurement**: Know they accelerate GEMM, don't know how to measure specific utilization %
 - **Safe Softmax implementation**: Know the principle (subtract max), need to verify in code
 - **TPU/Mixed Precision**: Google TPU's BF16 strategy vs NVIDIA GPU differences
 - **Stochastic Rounding**: Alternative rounding strategies for training stability
@@ -72,7 +74,7 @@
 - [ ] Implement safe softmax and test numerical stability
 - [ ] Compare BF16 vs FP16 accumulation experiment (0.01 × 1000 test)
 - [ ] Read PyTorch Autocast 源码，理解黑白名单的注册机制 (`torch/_autocast_utils.py`)
-- [ ] Add Nsight Compute analysis to benchmark，采集算术强度和带宽利用率指标
+- [ ] **Add Nsight Compute analysis** to benchmark Tensor Core utilization for Small vs Large models
 
 ### Short-term (This Week)
 - [ ] 了解 Slurm `--gres=gpu:N` 与 CUDA_VISIBLE_DEVICES 的映射关系
@@ -90,6 +92,7 @@
 - [ ] Study Tensor Core architecture and how to maximize utilization
 - [ ] Implement custom BF16 LayerNorm and test numerical stability
 - [ ] Compare with JAX/Flax BF16 strategy
+- [ ] **Quantify Tensor Core launch overhead** for small batch GEMMs
 
 ---
 
@@ -102,7 +105,7 @@
 | 2026-01-31 | Nsys Profiling & Kernel Analysis | Mastered GEMM kernel naming, understood memory-bound vs compute-bound, analyzed Softmax overhead motivating FlashAttention |
 | 2026-01-31 | Mixed Precision Training | Clarified Dynamic Range vs Precision, understood FP16/BF16/FP32 trade-offs, Loss Scaling mechanism |
 | 2026-02-02 | Mixed Precision Accumulation | Discovered FP16 spacing impact on accumulation, understood Master Weights design rationale, verified Round-to-Nearest behavior |
-| **2026-02-03** | **BF16 Autocast & Benchmarking** | **Discovered CPU vs GPU autocast behavior differences, implemented BF16 benchmarking, analyzed speedup trends (small models 3x, large models 2.2x), understood why optimizer must be outside autocast** |
+| **2026-02-03** | **BF16 Autocast & Benchmarking (Corrected)** | **Discovered CPU vs GPU autocast behavior differences, implemented BF16 benchmarking, CORRECTED speedup analysis: small models slower (0.96x), large models faster (2.18x), understood Tensor Core overhead dominance in small models** |
 
 ---
 
@@ -118,14 +121,25 @@
 
 ## 💡 Key Insights Archive
 
-### 2026-02-03: BF16 Speedup Plateau
-> "BF16 achieves ~3x speedup for Small models (memory-bound) but only ~2.2x for 2.7B model (compute-bound).
-> Speedup doesn't scale with parameter count because 2.7B has fewer layers (32 vs 48), meaning higher GEMM percentage.
-> This confirms: arithmetic intensity, not raw parameters, determines mixed precision gains."
+### 2026-02-03 (Corrected): BF16 Speedup Scales with Model Size
+> **CORRECTION**: "BF16 achieves 0.96x speedup for Small models (slightly slower due to Tensor Core overhead) 
+> but 2.18x for 2.7B model. Speedup increases with model size because larger models have sufficient 
+> GEMM volume to amortize Tensor Core launch costs and cast overhead."
+> 
+> **Previous misunderstanding**: "Small models more memory-bound" intuition was wrong. 
+> **Correct insight**: Tensor Core overhead dominates for small workloads; benefits only appear at scale.
+
+### 2026-02-03: Tensor Core Overhead Dominance
+> "Small models show 0.96x BF16 speedup because:
+> 1. FP32→BF16 cast kernels add latency
+> 2. Tensor Core launch overhead isn't amortized by small GEMMs
+> 3. Memory bandwidth savings don't matter when already in cache
+> BF16 is not universally beneficial - it requires sufficient workload volume."
 
 ### 2026-02-03: Memory Savings > Speed Gains
 > "BF16's primary benefit is preventing OOM (XL model runs at context_length=1024 in BF16 but OOM in FP32).
-> The ~2-3x speedup is secondary to the ability to train larger models/batches."
+> The speedup is workload-dependent: negative for small models, positive for large models.
+> In production, memory capacity often matters more than raw speed."
 
 ### 2026-02-03: Autocast is Device-Specific
 > "LayerNorm outputs float32 on GPU (blacklisted) but bfloat16 on CPU (not blacklisted).
@@ -138,11 +152,6 @@
 ### 2026-02-03: Optimizer Outside Autocast
 > "Master Weights require optimizer.step() to remain in FP32. Placing it inside autocast doesn't break anything
 > (autocast doesn't affect optimizer), but semantically it belongs outside - autocast is for compute, not parameter update."
-
-### 2026-02-03: Small Models More Memory-Bound
-> "Contrary to intuition, Small models show higher BF16 speedup (3x) than Large (2.9x) or 2.7B (2.2x).
-> Reason: Small models spend more time on memory-bound ops (LayerNorm, residuals, data movement).
-> BF16 halves HBM traffic, benefiting memory-bound workloads most."
 
 ### 2026-02-02: FP16 Accumulation Error is Non-uniform
 > "FP16 spacing increases with magnitude. Adding 0.01 to 16.0 in FP16 yields 16.015625 
