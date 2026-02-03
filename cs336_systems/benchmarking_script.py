@@ -168,7 +168,27 @@ def _get_valid_model_sizes(selected_sizes: str) -> set:
     return selected
 
 
-def run_benchmark(enable_mix_precision: bool, mix_type: str, model_size_filter: str = "all"):
+def _get_valid_context_lengths(selected_lengths: str) -> set:
+    """
+    Parse comma-separated context lengths and return valid ones.
+    Returns set of valid context lengths or all if 'all' is specified.
+    """
+    all_lengths = {128, 256, 512, 1024}
+    if selected_lengths.lower() == "all":
+        return all_lengths
+    try:
+        selected = {int(s.strip()) for s in selected_lengths.split(",")}
+    except ValueError:
+        raise ValueError(f"Invalid context length format. Must be integers: 128, 256, 512, 1024")
+    invalid = selected - all_lengths
+    if invalid:
+        raise ValueError(f"Invalid context lengths: {invalid}. Valid options: {sorted(all_lengths)}")
+    return selected
+
+
+def run_benchmark(
+    enable_mix_precision: bool, mix_type: str, model_size_filter: str = "all", context_len_filter: str = "all"
+):
     model_sizes = ["Small", "Medium", "Large", "xl", "2.7B"]
     d_model = [768, 1024, 1280, 1600, 2560]
     d_ff = [3072, 4096, 5120, 6400, 10240]
@@ -184,6 +204,7 @@ def run_benchmark(enable_mix_precision: bool, mix_type: str, model_size_filter: 
     executor.update_parameters(timeout_min=60)
 
     valid_sizes = _get_valid_model_sizes(model_size_filter)
+    valid_context_lengths = _get_valid_context_lengths(context_len_filter)
 
     filtered_configs = [
         (size, d_m, d_f, n_l, n_h, d_id)
@@ -195,9 +216,15 @@ def run_benchmark(enable_mix_precision: bool, mix_type: str, model_size_filter: 
         print(f"No valid model sizes found matching: {model_size_filter}")
         return
 
+    filtered_context_lengths = [cl for cl in context_lengths if cl in valid_context_lengths]
+
+    if not filtered_context_lengths:
+        print(f"No valid context lengths found matching: {context_len_filter}")
+        return
+
     results = []
 
-    for context_length in context_lengths:
+    for context_length in filtered_context_lengths:
         jobs = []
         job_configs = []
         with executor.batch():
@@ -283,6 +310,12 @@ def main():
         default="all",
         help="model sizes to benchmark: Small, Medium, Large, xl, 2.7B (comma-separated or 'all')",
     )
+    parser.add_argument(
+        "--context_len",
+        type=str,
+        default="all",
+        help="context lengths to benchmark: 128, 256, 512, 1024 (comma-separated or 'all')",
+    )
     parser.add_argument("--d_model", type=int, default=768, help="d_model")
     parser.add_argument("--d_ff", type=int, default=3072, help="d_ff")
     parser.add_argument("--num_layers", type=int, default=12, help="num_layers")
@@ -291,7 +324,7 @@ def main():
     args = parser.parse_args()
 
     if args.eval:
-        run_benchmark(args.mix, args.mix_dtype, args.model_size)
+        run_benchmark(args.mix, args.mix_dtype, args.model_size, args.context_len)
         return
     else:
         benchmark_one_step(
