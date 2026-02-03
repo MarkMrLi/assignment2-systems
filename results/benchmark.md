@@ -158,3 +158,41 @@ For the Large model (36 layers), the top GEMM kernel has 217 instances:
 1. **Memory-bound vs Compute-bound**: Small models are memory-bound (Fwd/Bwd ratio ~1.1x), while larger models become compute-bound (ratio approaches theoretical 2x)
 2. **Warmup importance**: First iteration includes CUDA kernel compilation, memory allocation, and operator optimization overhead
 3. **FlashAttention motivation**: The observed Softmax memory overhead (~400μs end-to-end vs ~35μs kernel time) demonstrates why fusing Softmax with Attention in SRAM is beneficial
+
+### Model Benchmarking Results with warm-up step:5, with mixed precision:bf16
+
+| model_size   |   d_model |   d_ff |   num_layers |   num_heads |   context_length | status                  | Fwd Mean (ms)   | Fwd Std (ms)   | Bwd Mean (ms)   | Bwd Std (ms)   | Total (ms)   |
+|:-------------|----------:|-------:|-------------:|------------:|-----------------:|:------------------------|:----------------|:---------------|:----------------|:---------------|:-------------|
+| Small        |       768 |   3072 |           12 |          12 |              128 | success                 | 24.09           | 1.70           | 29.56           | 3.57           | 53.65        |
+| Medium       |      1024 |   4096 |           24 |          16 |              128 | success                 | 47.89           | 1.67           | 50.72           | 2.45           | 98.61        |
+| Large        |      1280 |   5120 |           36 |          20 |              128 | success                 | 71.23           | 1.64           | 74.43           | 1.86           | 145.66       |
+| xl           |      1600 |   6400 |           48 |          25 |              128 | success                 | 94.37           | 2.69           | 98.78           | 0.65           | 193.14       |
+| 2.7B         |      2560 |  10240 |           32 |          32 |              128 | success                 | 88.68           | 8.86           | 140.99          | 0.34           | 229.67       |
+| Small        |       768 |   3072 |           12 |          12 |              256 | success                 | 28.13           | 1.41           | 31.09           | 3.83           | 59.22        |
+| Medium       |      1024 |   4096 |           24 |          16 |              256 | success                 | 48.47           | 1.57           | 50.36           | 2.04           | 98.83        |
+| Large        |      1280 |   5120 |           36 |          20 |              256 | success                 | 70.54           | 1.10           | 91.58           | 0.33           | 162.11       |
+| xl           |      1600 |   6400 |           48 |          25 |              256 | success                 | 93.24           | 2.18           | 157.92          | 0.31           | 251.16       |
+| 2.7B         |      2560 |  10240 |           32 |          32 |              256 | success                 | 117.84          | 9.01           | 202.37          | 0.61           | 320.21       |
+| Small        |       768 |   3072 |           12 |          12 |              512 | success                 | 26.99           | 2.43           | 30.64           | 2.09           | 57.63        |
+| Medium       |      1024 |   4096 |           24 |          16 |              512 | success                 | 48.06           | 1.11           | 78.76           | 0.21           | 126.82       |
+| Large        |      1280 |   5120 |           36 |          20 |              512 | success                 | 89.26           | 2.07           | 165.95          | 0.33           | 255.21       |
+| xl           |      1600 |   6400 |           48 |          25 |              512 | success                 | 149.49          | 3.24           | 284.74          | 0.75           | 434.23       |
+| 2.7B         |      2560 |  10240 |           32 |          32 |              512 | success                 | 203.85          | 9.37           | 367.70          | 0.28           | 571.56       |
+| Small        |       768 |   3072 |           12 |          12 |             1024 | success                 | 35.93           | 0.64           | 64.61           | 0.20           | 100.54       |
+| Medium       |      1024 |   4096 |           24 |          16 |             1024 | success                 | 95.39           | 0.36           | 182.20          | 0.56           | 277.58       |
+| Large        |      1280 |   5120 |           36 |          20 |             1024 | success                 | 192.86          | 2.14           | 363.18          | 0.40           | 556.04       |
+| xl           |      1600 |   6400 |           48 |          25 |             1024 | success                 | 339.99          | 3.62           | 648.14          | 0.95           | 988.13       |
+| 2.7B         |      2560 |  10240 |           32 |          32 |             1024 | OOM: CUDA Out of Memory | -               | -              | -               | -              | -            |
+
+## 分析
+使用混合推理（BF16）之后，各种大小的模型推理速度都显著提升，约有三倍的加速。但是有个反直觉的现象我不是很理解：模型参数更大的加速比不应该更大吗？因为小模型可能受限于带宽
+
+同时混合推理还优化了显存的占用，原本在 `context_len = 1024` 产生 OOM 的 xl 模型，在混合推理下可以正常完成训练
+
+| Model | FP32 Total (ms) | BF16 Total (ms) | Speedup |
+|-------|-----------------|-----------------|---------|
+| Small | 162.63 | 53.65 | 3.03x |
+| Medium | 302.86 | 98.61 | 3.07x |
+| Large | 422.76 | 145.66 | 2.90x |
+| xl | 557.00 | 193.14 | 2.88x |
+| 2.7B | 505.56 | 229.67 | 2.20x |
