@@ -59,6 +59,7 @@ def benchmark_one_step(
     device_id,
     enable_mixed_precision=False,
     mix_dtype="bf16",
+    pf_mem = False,
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     import torch
@@ -108,41 +109,60 @@ def benchmark_one_step(
             loss.backward()
             optimizer.step()
 
-    if device == "cuda":
-        torch.cuda.synchronize()
+    
 
     inputs, targets = generate_data(vocab_size, batch_size, context_length, device=device)
 
     fwd_times = []
     bwd_times = []
 
+    if device == "cuda":
+        torch.cuda.synchronize()
     for step in range(10):
+        enable_pf_mem = pf_mem and step == 0
         optimizer.zero_grad()
         torch.cuda.nvtx.range_push(f"step_{step}")
+        if enable_pf_mem:
+            torch.cuda.memory._record_memory_history(max_entries=1000000)
+        
+        try:
+            with autocast_ctx, torch.cuda.nvtx.range("Forward"):
+                start_forward_time = timeit.default_timer()
+                
+                y_hat = model.forward(inputs)
+                loss = cross_entropy(y_hat, targets)
+                if enable_pf_mem:
+                    forward_pickle_path = f"results/memory_snapshot_forward_only_{d_model}_{context_length}.pickle"
+                    if enable_mixed_precision:
+                        forward_pickle_path = f"results/memory_snapshot_forward_only_{d_model}_{context_length}_mixed_{mix_dtype}.pickle"
+                    torch.cuda.memory._dump_snapshot(forward_pickle_path)
 
-        with autocast_ctx, torch.cuda.nvtx.range("Forward"):
-            start_forward_time = timeit.default_timer()
-            y_hat = model.forward(inputs)
-            loss = cross_entropy(y_hat, targets)
-
-        if device == "cuda":
-            torch.cuda.synchronize()
-
-        forward_duration = (timeit.default_timer() - start_forward_time) * 1000  # 转换为 ms
-        fwd_times.append(forward_duration)
-
-        with autocast_ctx, torch.cuda.nvtx.range("Backward"):
-            start_backward_time = timeit.default_timer()
-            loss.backward()
             if device == "cuda":
                 torch.cuda.synchronize()
-            backward_duration = (timeit.default_timer() - start_backward_time) * 1000  # 转换为 ms
-            bwd_times.append(backward_duration)
 
-        with torch.cuda.nvtx.range("Optimize"):
-            optimizer.step()
+            forward_duration = (timeit.default_timer() - start_forward_time) * 1000  # 转换为 ms
+            fwd_times.append(forward_duration)
 
-        torch.cuda.nvtx.range_pop()
+            with autocast_ctx, torch.cuda.nvtx.range("Backward"):
+                start_backward_time = timeit.default_timer()
+                loss.backward()
+                if device == "cuda":
+                    torch.cuda.synchronize()
+                backward_duration = (timeit.default_timer() - start_backward_time) * 1000  # 转换为 ms
+                bwd_times.append(backward_duration)
+
+            with torch.cuda.nvtx.range("Optimize"):
+                optimizer.step()
+
+            torch.cuda.nvtx.range_pop()
+            if enable_pf_mem:
+                fullstep_pickle_path = f"results/memory_snapshot_{d_model}_{context_length}.pickle"
+                if enable_mixed_precision:
+                    fullstep_pickle_path = f"results/memory_snapshot_{d_model}_{context_length}_mixed_{mix_dtype}.pickle"
+                torch.cuda.memory._dump_snapshot(fullstep_pickle_path)
+        finally:
+            if enable_pf_mem:
+                torch.cuda.memory._record_memory_history(enabled=None)
 
     return {
         "fwd_mean": np.mean(fwd_times),
@@ -187,7 +207,7 @@ def _get_valid_context_lengths(selected_lengths: str) -> set:
 
 
 def run_benchmark(
-    enable_mix_precision: bool, mix_type: str, model_size_filter: str = "all", context_len_filter: str = "all"
+    enable_mix_precision: bool, mix_type: str, pf_mem:bool, model_size_filter: str = "all", context_len_filter: str = "all"
 ):
     model_sizes = ["Small", "Medium", "Large", "xl", "2.7B"]
     d_model = [768, 1024, 1280, 1600, 2560]
@@ -242,6 +262,7 @@ def run_benchmark(
                     d_id,
                     enable_mix_precision,
                     mix_type,
+                    pf_mem
                 )
                 jobs.append(job)
                 job_configs.append(
@@ -300,7 +321,6 @@ def run_benchmark(
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark your training infra")
-    parser.add_argument("--eval", action="store_true", help="benchmark with default configs")
     parser.add_argument("--mix", action="store_true", help="turn on mixed precision")
     parser.add_argument("--mix_dtype", type=str, default="bf16", choices=["bf16", "fp16"], help="mixed precision dtype")
     parser.add_argument("--memory", action="store_true", help="profile memory")
@@ -320,26 +340,11 @@ def main():
     parser.add_argument("--d_ff", type=int, default=3072, help="d_ff")
     parser.add_argument("--num_layers", type=int, default=12, help="num_layers")
     parser.add_argument("--num_heads", type=int, default=12, help="num_heads")
-    parser.add_argument("--context_length", type=int, default=256, help="context length")
+
     args = parser.parse_args()
 
-    if args.eval:
-        run_benchmark(args.mix, args.mix_dtype, args.model_size, args.context_len)
-        return
-    else:
-        benchmark_one_step(
-            args.d_model,
-            args.d_ff,
-            args.num_layers,
-            args.num_heads,
-            10000,
-            args.context_length,
-            4,
-            5,
-            device_id=0,
-            enable_mixed_precision=args.mix,
-            mix_dtype=args.mix_dtype,
-        )
+    run_benchmark(args.mix, args.mix_dtype,args.memory, args.model_size, args.context_len)
+    return
 
 
 if __name__ == "__main__":
