@@ -60,6 +60,7 @@ def benchmark_one_step(
     enable_mixed_precision=False,
     mix_dtype="bf16",
     pf_mem = False,
+    fwd_only = False
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     import torch
@@ -120,55 +121,70 @@ def benchmark_one_step(
         torch.cuda.synchronize()
     for step in range(10):
         enable_pf_mem = pf_mem and step == 0
-        optimizer.zero_grad()
         torch.cuda.nvtx.range_push(f"step_{step}")
         if enable_pf_mem:
             torch.cuda.memory._record_memory_history(max_entries=1000000)
         
         try:
-            with autocast_ctx, torch.cuda.nvtx.range("Forward"):
-                start_forward_time = timeit.default_timer()
-                
-                y_hat = model.forward(inputs)
-                loss = cross_entropy(y_hat, targets)
+            # Inference forward only, no grad
+            if fwd_only:
+                with torch.no_grad(), autocast_ctx:
+                    start_forward_time = timeit.default_timer()
+                    y_hat = model.forward(inputs)
+                if device == "cuda":
+                    torch.cuda.synchronize()
+
+                torch.cuda.nvtx.range_pop()
+                forward_duration = (timeit.default_timer() - start_forward_time) * 1000  # 转换为 ms
+                fwd_times.append(forward_duration)
                 if enable_pf_mem:
                     forward_pickle_path = f"results/memory_snapshot_forward_only_{d_model}_{context_length}.pickle"
                     if enable_mixed_precision:
                         forward_pickle_path = f"results/memory_snapshot_forward_only_{d_model}_{context_length}_mixed_{mix_dtype}.pickle"
                     torch.cuda.memory._dump_snapshot(forward_pickle_path)
+            # Training full step
+            else:
+                optimizer.zero_grad()
+                with autocast_ctx, torch.cuda.nvtx.range("Forward"):
+                    start_forward_time = timeit.default_timer()
+                    
+                    y_hat = model.forward(inputs)
+                    loss = cross_entropy(y_hat, targets)
+                    
 
-            if device == "cuda":
-                torch.cuda.synchronize()
-
-            forward_duration = (timeit.default_timer() - start_forward_time) * 1000  # 转换为 ms
-            fwd_times.append(forward_duration)
-
-            with autocast_ctx, torch.cuda.nvtx.range("Backward"):
-                start_backward_time = timeit.default_timer()
-                loss.backward()
                 if device == "cuda":
                     torch.cuda.synchronize()
-                backward_duration = (timeit.default_timer() - start_backward_time) * 1000  # 转换为 ms
-                bwd_times.append(backward_duration)
 
-            with torch.cuda.nvtx.range("Optimize"):
-                optimizer.step()
+                forward_duration = (timeit.default_timer() - start_forward_time) * 1000  # 转换为 ms
+                fwd_times.append(forward_duration)
 
-            torch.cuda.nvtx.range_pop()
-            if enable_pf_mem:
-                fullstep_pickle_path = f"results/memory_snapshot_{d_model}_{context_length}.pickle"
-                if enable_mixed_precision:
-                    fullstep_pickle_path = f"results/memory_snapshot_{d_model}_{context_length}_mixed_{mix_dtype}.pickle"
-                torch.cuda.memory._dump_snapshot(fullstep_pickle_path)
+                with autocast_ctx, torch.cuda.nvtx.range("Backward"):
+                    start_backward_time = timeit.default_timer()
+                    loss.backward()
+                    if device == "cuda":
+                        torch.cuda.synchronize()
+                    backward_duration = (timeit.default_timer() - start_backward_time) * 1000  # 转换为 ms
+                    bwd_times.append(backward_duration)
+
+                with torch.cuda.nvtx.range("Optimize"):
+                    optimizer.step()
+
+                torch.cuda.nvtx.range_pop()
+                if enable_pf_mem:
+                    fullstep_pickle_path = f"results/memory_snapshot_{d_model}_{context_length}.pickle"
+                    if enable_mixed_precision:
+                        fullstep_pickle_path = f"results/memory_snapshot_{d_model}_{context_length}_mixed_{mix_dtype}.pickle"
+                    torch.cuda.memory._dump_snapshot(fullstep_pickle_path)
         finally:
             if enable_pf_mem:
                 torch.cuda.memory._record_memory_history(enabled=None)
+                break
 
     return {
         "fwd_mean": np.mean(fwd_times),
         "fwd_std": np.std(fwd_times),
-        "bwd_mean": np.mean(bwd_times),
-        "bwd_std": np.std(bwd_times),
+        "bwd_mean": np.mean(bwd_times) if bwd_times else 0.0,
+        "bwd_std": np.std(bwd_times) if bwd_times else 0.0,
         "total_mean": np.mean(fwd_times) + np.mean(bwd_times),
     }
 
@@ -207,7 +223,7 @@ def _get_valid_context_lengths(selected_lengths: str) -> set:
 
 
 def run_benchmark(
-    enable_mix_precision: bool, mix_type: str, pf_mem:bool, model_size_filter: str = "all", context_len_filter: str = "all"
+    enable_mix_precision: bool, mix_type: str, pf_mem:bool, fwd_only:bool, model_size_filter: str = "all", context_len_filter: str = "all"
 ):
     model_sizes = ["Small", "Medium", "Large", "xl", "2.7B"]
     d_model = [768, 1024, 1280, 1600, 2560]
@@ -262,7 +278,8 @@ def run_benchmark(
                     d_id,
                     enable_mix_precision,
                     mix_type,
-                    pf_mem
+                    pf_mem,
+                    fwd_only
                 )
                 jobs.append(job)
                 job_configs.append(
@@ -324,6 +341,7 @@ def main():
     parser.add_argument("--mix", action="store_true", help="turn on mixed precision")
     parser.add_argument("--mix_dtype", type=str, default="bf16", choices=["bf16", "fp16"], help="mixed precision dtype")
     parser.add_argument("--memory", action="store_true", help="profile memory")
+    parser.add_argument("--fwd_only", action="store_true", help="Inference forward only")
     parser.add_argument(
         "--model_size",
         type=str,
@@ -343,7 +361,7 @@ def main():
 
     args = parser.parse_args()
 
-    run_benchmark(args.mix, args.mix_dtype,args.memory, args.model_size, args.context_len)
+    run_benchmark(args.mix, args.mix_dtype,args.memory,args.fwd_only, args.model_size, args.context_len)
     return
 
 
