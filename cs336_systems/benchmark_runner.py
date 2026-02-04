@@ -46,6 +46,8 @@ def run_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
 
         # 预热
         _warmup(model, optimizer, config, device)
+        if optimizer is not None:
+            optimizer.zero_grad()
 
         # 根据是否需要内存 profiling 选择执行路径
         if config.profile_memory:
