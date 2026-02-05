@@ -86,6 +86,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable memory profiling (saves .pickle snapshots)",
     )
+    parser.add_argument(
+        "--enable_compile",
+        action="store_true", 
+        help="Enable torch.compile"
+    )
 
     # 输出
     parser.add_argument(
@@ -154,6 +159,7 @@ def build_configs(args: argparse.Namespace) -> list[BenchmarkConfig]:
                 mixed_precision=args.mixed_precision,
                 forward_only=args.forward_only,
                 profile_memory=args.profile_memory,
+                enable_compile=args.enable_compile,
             )
             configs.append(config)
 

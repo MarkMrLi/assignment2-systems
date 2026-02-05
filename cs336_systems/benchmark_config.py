@@ -38,6 +38,7 @@ class BenchmarkConfig:
     mixed_precision: Optional[Literal["bf16", "fp16"]] = None
     forward_only: bool = False
     profile_memory: bool = False
+    enable_compile: bool = False
 
     def __repr__(self) -> str:
         """简洁的字符串表示，用于日志"""

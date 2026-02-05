@@ -90,6 +90,7 @@ def _setup_device() -> torch.device:
 def _create_model(config: BenchmarkConfig, device: torch.device) -> BasicsTransformerLM:
     """创建并初始化模型"""
     print("Initializing model...")
+    
     with torch.cuda.nvtx.range("Init model"):
         model = BasicsTransformerLM(
             vocab_size=config.vocab_size,
@@ -100,6 +101,8 @@ def _create_model(config: BenchmarkConfig, device: torch.device) -> BasicsTransf
             d_ff=config.model.d_ff,
             rope_theta=10000,
         )
+        if BenchmarkConfig.enable_compile:
+            model = torch.compile(model)
         model.to(device)
     return model
 
