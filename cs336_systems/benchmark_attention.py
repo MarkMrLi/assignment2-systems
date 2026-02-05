@@ -10,6 +10,7 @@ from cs336_systems.benchmark_runner import _classify_error
 import pandas as pd
 from pathlib import Path
 import math
+import sys
 
 
 @dataclass
@@ -20,6 +21,7 @@ class BenchmarkConfig:
     warmup_steps: int = 5
     steps: int = 100
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    enable_compile: bool = False
 
 
 @dataclass
@@ -51,7 +53,7 @@ class BenchmarkResult:
 def scaled_dot_product_attention(
     Q: Float[torch.Tensor, "batch_size seq_len d_model"],
     K: Float[torch.Tensor, "batch_size seq_len d_model"],
-    V: Float[torch.Tensor, "batch_size seq_len d_model"]
+    V: Float[torch.Tensor, "batch_size seq_len d_model"],
 ) -> Float[torch.Tensor, "batch_size seq_len d_model"]:
     d_model = Q.shape[-1]
     attn_score = einsum(Q, K, "... seq_q d_m, ... seq_k d_m -> ... seq_q seq_k") / math.sqrt(d_model)
@@ -97,7 +99,7 @@ def fwd_only(config: BenchmarkConfig):
 def fwd_bwd(config: BenchmarkConfig):
     """foward and backward"""
     Q, K, V = get_q_k_v(config, requires_grad=True)
-    
+
     for _ in range(config.warmup_steps):
         out = scaled_dot_product_attention(Q, K, V)
         out = out.sum()
@@ -107,24 +109,24 @@ def fwd_bwd(config: BenchmarkConfig):
     bwd_times = []
     peak_memory = []
     add_memory = []
-    
+
     for _ in range(config.steps):
-        if Q.grad is not None: 
+        if Q.grad is not None:
             Q.grad.zero_()
-        if K.grad is not None: 
+        if K.grad is not None:
             K.grad.zero_()
-        if V.grad is not None: 
+        if V.grad is not None:
             V.grad.zero_()
-        
+
         torch.cuda.reset_peak_memory_stats()
         base_mem = torch.cuda.memory_allocated()
         out = scaled_dot_product_attention(Q, K, V)
         out = out.sum()
         torch.cuda.synchronize()
-        
+
         peak_memory.append(torch.cuda.max_memory_allocated() / (1024**2))
         add_memory.append((torch.cuda.memory_allocated() - base_mem) / (1024**2))
-        
+
         start = timeit.default_timer()
         out.backward()
         torch.cuda.synchronize()
@@ -137,7 +139,7 @@ def fwd_bwd(config: BenchmarkConfig):
 def run_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
     """Benchmark Attention"""
     result = BenchmarkResult(config=config)
-    
+
     try:
         result.fwd_times = fwd_only(config)
         result.bwd_times, result.memory_after_forward, result.add_memory = fwd_bwd(config)
@@ -152,24 +154,12 @@ def run_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--d_model", type=str, default="all", help="d_model: 16,32,64,128 or all")
+    parser.add_argument("--seq_len", type=str, default="all", help="seq_len:256, 1024, 4096, 8192, 16384 or all")
     parser.add_argument(
-        "--d_model",
-        type=str,
-        default="all",
-        help="d_model: 16,32,64,128 or all"
+        "--output_path", type=str, default="results/profile_attention/pytorch.md", help="output_file_path"
     )
-    parser.add_argument(
-        "--seq_len",
-        type=str,
-        default="all",
-        help="seq_len:256, 1024, 4096, 8192, 16384 or all"
-    )
-    parser.add_argument(
-        "--output_path",
-        type=str,
-        default="results/profile_attention/pytorch.md",
-        help="output_file_path"
-    )
+    parser.add_argument("--enable_compile", action="store_true", help="Enable torch.compile")
 
     return parser.parse_args()
 
@@ -177,21 +167,21 @@ def parse_args() -> argparse.Namespace:
 def build_config(args: argparse.Namespace) -> list[BenchmarkConfig]:
     default_d_model = [16, 32, 64, 128]
     default_seq_len = [256, 1024, 4096, 8192, 16384]
-    
+
     if args.d_model == "all":
         d_models = default_d_model
     else:
-        d_models = [int(d.strip()) for d in args.d_model.split(',')]
+        d_models = [int(d.strip()) for d in args.d_model.split(",")]
 
     if args.seq_len == "all":
         seq_lens = default_seq_len
     else:
-        seq_lens = [int(s.strip()) for s in args.seq_len.split(',')]
+        seq_lens = [int(s.strip()) for s in args.seq_len.split(",")]
 
     configs = []
     for d in d_models:
         for s in seq_lens:
-            config = BenchmarkConfig(d_model=d, seq_len=s)
+            config = BenchmarkConfig(d_model=d, seq_len=s, enable_compile=args.enable_compile)
             configs.append(config)
 
     return configs
@@ -201,15 +191,17 @@ def process_result(results: list[BenchmarkResult], output_path: str):
     format_results = []
     for r in results:
         res_dict = asdict(r.config)
-        res_dict.update({
-            "fwd_ms": r.fwd_time_mean,
-            "bwd_ms": r.bwd_time_mean,
-            "mem_max_MB": r.peak_memory_mean,
-            "add_mem_MB": r.add_memory_mean,
-            "status": r.status
-        })
+        res_dict.update(
+            {
+                "fwd_ms": r.fwd_time_mean,
+                "bwd_ms": r.bwd_time_mean,
+                "mem_max_MB": r.peak_memory_mean,
+                "add_mem_MB": r.add_memory_mean,
+                "status": r.status,
+            }
+        )
         format_results.append(res_dict)
-    
+
     df = pd.DataFrame(format_results)
     result_md = df.to_markdown(index=False) or ""
 
@@ -228,6 +220,10 @@ def main():
     3. 整理结果
     """
     args = parse_args()
+    if args.enable_compile:
+        global scaled_dot_product_attention
+        scaled_dot_product_attention = torch.compile(scaled_dot_product_attention, dynamic=True)
+        args.output_path = "results/profile_attention/torch_compile.md"
     configs = build_config(args)
 
     results: list[BenchmarkResult] = []
