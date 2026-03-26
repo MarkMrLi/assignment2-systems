@@ -1,74 +1,27 @@
 # CS336 Learning Ledger
 **Last Updated:** 2026-02-05
 
-## 🧠 Knowledge Graph (Mastery Levels)
+## Knowledge Graph (Mastery Levels)
 
-### 🟢 Mastered
-- **GPU Benchmarking Fundamentals**: Warmup discipline; `torch.cuda.synchronize()` for accurate timing; NVTX ranges for phase labeling; separate warmup vs measurement phases
-- **Memory Profiling**: `torch.cuda.memory_allocated()` vs `max_memory_allocated()`; memory measurement timing; decomposing peak memory into components (parameters, activations, CUDA overhead)
-- **Naïve Attention Mechanics**: Full matrix materialization O(seq_len²); attention score computation (QK^T/√d_k); softmax operation; output computation (PV)
-- **PyTorch Autograd Internals**: Leaf nodes vs intermediate tensors; lazy gradient computation; why intermediate tensors (S, P, O) don't persist `.grad`; memory reuse during backward
+- Mastered:
+  - GPU benchmarking basics: warmup discipline; `torch.cuda.synchronize()` for accurate timings; separating warmup vs measurement.
+  - CUDA memory profiling: `torch.cuda.memory_allocated()` vs `torch.cuda.max_memory_allocated()`; using `torch.cuda.reset_peak_memory_stats()` to measure phase-local peaks.
+  - Naive Attention mechanics and scaling: standard attention materializes score/probability matrices (`S = QK^T/sqrt(d)`, `P = softmax(S)`) with O(seq_len^2) activation memory.
+  - Metric interpretation: `add_mem_MB` as a proxy for activations that remain live after forward for backward; `mem_max_MB` as transient peak driven by intermediates/workspaces.
 
-### 🟡 Developing
-- **Memory Optimization Strategies**: Gradient checkpointing trade-offs (compute vs memory); understanding when to apply checkpointing
-- **Scaling Analysis**: O(N²) vs O(N) memory components; estimating OOM boundaries; GPU memory budget planning
+- Developing:
+  - `torch.compile` performance model: kernel fusion and layout/contiguity effects; when compile overhead dominates; why speedups improve at long sequence lengths.
+  - Distinguishing compile-time allocations/caches from steady-state runtime memory and time.
+  - Attribution in end-to-end models: separating Attention vs MLP vs LayerNorm/residual contributions to speed and memory.
 
-### 🔴 Blind Spots
-- **FlashAttention Implementation**: Tiled attention algorithm; block-wise softmax with online normalization; SRAM vs HBM data movement optimization
-- **Numerical Stability**: Online softmax algorithm for LSE (log-sum-exp); FP16/FP8 precision considerations
-- **Quantization**: FP8/FP4 memory accounting; mixed-gate architectures
-- **Advanced Parallelism**: Tensor Parallel (TP) vs Pipeline Parallel (PP) decision criteria
-- **Tensor Core Utilization**: Measuring actual utilization; kernel-level profiling
+- Blind Spots:
+  - FlashAttention-2 algorithm: tiling strategy; online softmax (LSE) bookkeeping; SRAM vs HBM data movement; backward recomputation vs saved statistics.
+  - Numerics: stability of online softmax; FP16/FP8 interactions.
+  - Parallelism and kernel-level analysis: using profiler traces to reason about bandwidth vs compute limits.
 
-## 📉 Action Items & Review Queue
+## Action Items and Review Queue
 
-### Immediate (Next Session)
-1. **Implement FlashAttention-2 PyTorch version**:
-   - Follow FlashAttention-2 paper algorithm with tiling
-   - Implement online softmax with log-sum-exp (LSE) saving
-   - Complete `get_flashattention_autograd_function_pytorch()` in `tests/adapters.py`
-
-2. **Verify FlashAttention correctness**:
-   - Compare outputs with naïve attention (forward pass)
-   - Compare gradients with naïve attention (backward pass)
-   - Test on attention test cases (including causal masking)
-
-### Short-term
-3. **Memory comparison**:
-   - Benchmark FlashAttention memory vs naïve attention
-   - Verify O(N × block_size) vs O(N²) scaling claim
-   - Measure actual memory savings at seq_len=4096, 8192, 16384
-
-4. **Performance comparison**:
-   - Time FlashAttention forward and backward
-   - Compare with naïve attention timings
-   - Identify compute-vs-memory trade-off sweet spot
-
-## 📊 Session Summary (2026-02-05)
-
-### Deliverables Completed
-- ✅ Created `cs336_systems/benchmark_attention.py` - dedicated attention benchmarking script
-- ✅ Generated benchmark results across 20 configurations (d_model × seq_len)
-- ✅ Produced comprehensive analysis document at `results/profile_attention/pytorch.md`
-
-### Key Findings
-| Metric | Observation |
-|--------|-------------|
-| Memory scaling | `add_mem_MB ≈ 2 × seq_len²` (FP32, batch=8) |
-| seq_len=16384 memory | ~16 GB (activations) + 64 MB (cuBLAS) = ~33 GB peak |
-| Forward time scaling | ~O(seq_len²) - dominated by matmul operations |
-| OOM boundary | Between seq_len=16384 (~33 GB) and seq_len=32768 (~130 GB) |
-
-### Memory Decomposition (seq_len=256)
-```
-Peak Memory = cuBLAS workspace (64 MB) 
-            + QKV + gradients (~4.5 MB) 
-            + Attention scores S, P (~4 MB)
-            ≈ 72.77 MB (measured) vs 69 MB (theoretical)
-```
-
-### Core Insight
-The naïve attention implementation's O(N²) activation memory is the fundamental bottleneck. For seq_len=16384, just the attention scores require ~16 GB (FP32), exceeding many GPUs. FlashAttention-2 addresses this by:
-1. **Tiling**: Process attention in blocks (e.g., 64×64)
-2. **Recomputation**: Don't store full S, P; recompute during backward
-3. **Fusion**: Single kernel reduces memory traffic
+1. Part (b) benchmark: compile the full Transformer with `torch.compile(model)` and report (a) forward-only timing and (b) full step timing (forward+backward+optimizer).
+2. Isolate compile overhead: record first-iteration latency separately from steady-state; increase warmup; document whether numbers include compilation.
+3. Use a profiler (e.g., `torch.profiler` or `nsys`) to compare kernel counts and identify whether speedups come from fewer launches vs faster kernels.
+4. FlashAttention prep: restate the key goal as eliminating full `[B, N, N]` materialization in HBM; review online softmax derivation and what must be saved for backward.
