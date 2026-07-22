@@ -254,3 +254,45 @@ For the Large model (36 layers), the top GEMM kernel has 217 instances:
 同时混合推理还优化了显存的占用，原本在 `context_len = 1024` 产生 OOM 的 xl 模型，在混合推理下可以正常完成训练
 
 **Conclusion:** BF16 mixed precision provides negative or minimal speedup for small models but significant speedup (1.26x-2.18x) for large models. The primary engineering benefit is memory reduction enabling larger models/batches to fit in GPU memory.
+
+### Benchmark Results (warmup=5, dtype=fp32, mode=forward_only, memory_profiling=ON)
+
+| Model   |   Context | Status   |   Fwd Mean (ms) |   Fwd Std (ms) | Bwd Mean (ms)   | Bwd Std (ms)   |   Total (ms) |
+|:--------|----------:|:---------|----------------:|---------------:|:----------------|:---------------|-------------:|
+| Small   |       128 | ✓        |           26.04 |              0 | -               | -              |        26.04 |
+
+
+### Benchmark Results (warmup=5, dtype=fp32, mode=forward_only)
+
+| Model   |   Context | Status   |   Fwd Mean (ms) |   Fwd Std (ms) | Bwd Mean (ms)   | Bwd Std (ms)   |   Total (ms) |
+|:--------|----------:|:---------|----------------:|---------------:|:----------------|:---------------|-------------:|
+| Small   |       128 | ✓        |           26.13 |           0.34 | -               | -              |        26.13 |
+
+
+### Benchmark Results (warmup=5, dtype=fp32, mode=forward_only)
+
+| Model   |   Context | Status   |   Fwd Mean (ms) |   Fwd Std (ms) | Bwd Mean (ms)   | Bwd Std (ms)   |   Total (ms) |
+|:--------|----------:|:---------|----------------:|---------------:|:----------------|:---------------|-------------:|
+| Small   |       128 | ✓        |           27.43 |           1.45 | -               | -              |        27.43 |
+
+
+### Benchmark Results (warmup=5, dtype=fp32, mode=forward_only)
+
+| Model   |   Context | Status   |   Fwd Mean (ms) |   Fwd Std (ms) | Bwd Mean (ms)   | Bwd Std (ms)   |   Total (ms) |
+|:--------|----------:|:---------|----------------:|---------------:|:----------------|:---------------|-------------:|
+| Small   |       128 | ✓        |           26.69 |           0.87 | -               | -              |        26.69 |
+
+
+### Benchmark Results (warmup=5, dtype=fp32, mode=forward_only)
+
+| Model   |   Context | Status   |   Fwd Mean (ms) |   Fwd Std (ms) | Bwd Mean (ms)   | Bwd Std (ms)   |   Total (ms) |
+|:--------|----------:|:---------|----------------:|---------------:|:----------------|:---------------|-------------:|
+| Small   |       128 | ✓        |           29.47 |           0.87 | -               | -              |        29.47 |
+
+
+### Benchmark Results (warmup=5, dtype=fp32, mode=forward_only)
+
+| Model   |   Context | Status   |   Fwd Mean (ms) |   Fwd Std (ms) | Bwd Mean (ms)   | Bwd Std (ms)   |   Total (ms) |
+|:--------|----------:|:---------|----------------:|---------------:|:----------------|:---------------|-------------:|
+| Small   |       128 | ✓        |           27.67 |           0.57 | -               | -              |        27.67 |
+
